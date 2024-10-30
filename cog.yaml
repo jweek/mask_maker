@@ -5,7 +5,6 @@ image: "nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04"
 
 build:
   gpu: true
-  cuda: "11.7"
   system_packages:
     - "libgl1-mesa-glx"
     - "libglib2.0-0"
