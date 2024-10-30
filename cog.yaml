@@ -1,4 +1,4 @@
-# Configuration for Cog ⚙️
+# cog.yaml
 
 image: "nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04"
 
@@ -11,10 +11,10 @@ build:
     - "wget"
   python_version: "3.10"
   python_packages:
-    - "torch==1.13.1+cu117"
-    - "torchvision==0.14.1+cu117"
     - "transformers==4.30.2"
     - "fairscale==0.4.13"
+    - "torch==1.13.0+cu117"
+    - "torchvision==0.14.0+cu117"
     - "Pillow==9.5.0"
     - "opencv-python==4.7.0.72"
     - "addict==2.4.0"
@@ -23,7 +23,7 @@ build:
     - "pycocotools"
   run:
     - pip install --upgrade pip
-    - pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117
+    - pip install torch==1.13.0+cu117 torchvision==0.14.0+cu117 --index-url https://download.pytorch.org/whl/cu117
     - python script/download_weights.py
 
 predict: "predict.py:Predictor"
