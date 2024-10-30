@@ -1,29 +1,44 @@
-# cog.yaml
+name: Push model to Replicate
 
-image: "nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04"
-
-build:
-  gpu: true
-  system_packages:
-    - "libgl1-mesa-glx"
-    - "libglib2.0-0"
-    - "build-essential"
-    - "wget"
-  python_version: "3.10"
-  python_packages:
-    - "transformers==4.30.2"
-    - "fairscale==0.4.13"
-    - "torch==1.13.0+cu117"
-    - "torchvision==0.14.0+cu117"
-    - "Pillow==9.5.0"
-    - "opencv-python==4.7.0.72"
-    - "addict==2.4.0"
-    - "yapf==0.40.0"
-    - "numpy"
-    - "pycocotools"
-  run:
-    - pip install --upgrade pip
-    - pip install torch==1.13.0+cu117 torchvision==0.14.0+cu117 --index-url https://download.pytorch.org/whl/cu117
-    - python script/download_weights.py
-
-predict: "predict.py:Predictor"
+# This workflow is triggered manually from the GitHub website.
+# To run it, click the "Actions" tab on the repo page.
+on:
+  workflow_dispatch:
+jobs:
+  push_to_replicate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+        #to save disk space due to large image size
+      - name: Cleanup unused docker images
+        run: |
+          sudo apt autoremove --purge
+          sudo apt autoclean
+          sudo apt clean
+          docker system prune -af
+      #to save disk space due to large image size
+      - name: CleanUp hostedtoolcache
+        run: rm -rf /opt/hostedtoolcache
+      #to save disk space due to large image size
+      - name: Free disk space
+        run: |
+          chmod +x ./script/free_disk_space.sh
+          ./script/free_disk_space.sh
+        shell: bash
+      - name: Install Cog
+        run: |
+          sudo curl -o /usr/local/bin/cog -L https://github.com/replicate/cog/releases/download/v0.8.0-beta3/cog_Linux_x86_64
+          sudo chmod +x /usr/local/bin/cog
+          cog --version
+      - name: Log in to Replicate
+        env:
+          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
+        run: |
+          echo $REPLICATE_API_TOKEN | cog login --token-stdin
+      - name: Download model weights
+        run: |
+          cog run script/download_weights.py
+      - name: Push to Replicate
+        run: |
+          cog push r8.im/jweek/mask_maker
