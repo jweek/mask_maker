@@ -1,6 +1,8 @@
 # Configuration for Cog ⚙️
 # Reference: https://github.com/replicate/cog/blob/main/docs/yaml.md
 
+image: "nvidia/cuda:11.7.1-cudnn8-devel-ubuntu22.04"
+
 build:
   gpu: true
   cuda: "11.7"
@@ -19,6 +21,6 @@ build:
     - "addict==2.4.0"
     - "yapf==0.40.0"
     - "numpy"
-    - "pycocotools" 
+    - "pycocotools"
 
 predict: "predict.py:Predictor"
