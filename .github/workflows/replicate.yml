@@ -17,6 +17,8 @@ jobs:
           sudo apt autoclean
           sudo apt clean
           docker system prune -af
+      - name: Clear Docker Cache
+        run: docker builder prune -af
       #to save disk space due to large image size
       - name: CleanUp hostedtoolcache
         run: rm -rf /opt/hostedtoolcache
