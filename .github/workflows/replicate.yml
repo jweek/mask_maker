@@ -1,7 +1,5 @@
-name: Push model to Replicate
+name: Push Model to Replicate
 
-# This workflow is triggered manually from the GitHub website.
-# To run it, click the "Actions" tab on the repo page.
 on:
   workflow_dispatch:
 jobs:
@@ -10,35 +8,57 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v3
-        #to save disk space due to large image size
+
+      # Install Git and Git LFS for model handling
+      - name: Install Git and Git LFS
+        run: |
+          sudo apt update
+          sudo apt install -y git git-lfs
+          git lfs install
+
+      # Disk space cleanup steps
       - name: Cleanup unused docker images
         run: |
           sudo apt autoremove --purge
           sudo apt autoclean
           sudo apt clean
           docker system prune -af
-      #to save disk space due to large image size
+
       - name: CleanUp hostedtoolcache
         run: rm -rf /opt/hostedtoolcache
-      #to save disk space due to large image size
+
       - name: Free disk space
         run: |
           chmod +x ./script/free_disk_space.sh
           ./script/free_disk_space.sh
         shell: bash
+
+      # Download models using the custom script
+      - name: Download Models
+        run: |
+          chmod +x ./script/download_models.sh
+          ./script/download_models.sh
+        shell: bash
+
+      # Install Cog
       - name: Install Cog
         run: |
           sudo curl -o /usr/local/bin/cog -L https://github.com/replicate/cog/releases/download/v0.8.0-beta3/cog_Linux_x86_64
           sudo chmod +x /usr/local/bin/cog
           cog --version
+
+      # Log in to Replicate
       - name: Log in to Replicate
         env:
           REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
         run: |
           echo $REPLICATE_API_TOKEN | cog login --token-stdin
-      - name: Download model weights
+
+      # Push to Replicate
+      - name: Push to Replicate
         run: |
-          cog run script/download_weights.py
+          cog push r8.im/<your-username>/<model-name>
+
       - name: Push to Replicate
         run: |
           cog push r8.im/jweek/mask_maker

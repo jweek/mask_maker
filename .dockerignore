@@ -1,0 +1,37 @@
+# Git files
+.git
+.github/
+.gitignore
+
+# Python cache and environment files
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*.egg-info/
+*.pyo
+.Python
+
+# Virtual environment
+/venv/
+
+# IDE and editor files
+*.vscode/
+*.idea/
+
+# Large model or weight files (if managed separately)
+# Adjust paths if weights are stored in a specific directory
+weights/
+*.pth
+*.ckpt
+*.onnx
+
+# Logs and temporary files
+logs/
+*.log
+*.tmp
+
+# Docker files within cloned repositories
+GroundingDINO/Dockerfile
+segment-anything/Dockerfile

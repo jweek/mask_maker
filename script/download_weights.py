@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# deprecated: replaced with download_models.py
+
 import os
 import subprocess
 import shutil
