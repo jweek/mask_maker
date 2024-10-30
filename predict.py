@@ -18,19 +18,6 @@ os.environ['CUDA_HOME'] = '/usr/local/cuda-11.7'
 os.environ['AM_I_DOCKER'] = 'true'
 os.environ['BUILD_WITH_CUDA'] = 'true'
 
-env_vars = os.environ.copy()
-HOME = os.getcwd()
-
-# Set up paths and install dependencies for GroundingDINO and Segment Anything
-sys.path.insert(0, "weights")
-sys.path.insert(0, "weights/GroundingDINO")
-sys.path.insert(0, "weights/segment-anything")
-os.chdir("weights/GroundingDINO")
-subprocess.call([sys.executable, '-m', 'pip', 'install', '-e', '.'], env=env_vars)
-os.chdir("weights/segment-anything")
-subprocess.call([sys.executable, '-m', 'pip', 'install', '-e', '.'], env=env_vars)
-os.chdir(HOME)
-
 class Predictor(BasePredictor):
     def setup(self):
         """Load the model into memory to make running multiple predictions efficient"""
