@@ -54,11 +54,6 @@ jobs:
         run: |
           echo $REPLICATE_API_TOKEN | cog login --token-stdin
 
-      # Push to Replicate
-      - name: Push to Replicate
-        run: |
-          cog push r8.im/<your-username>/<model-name>
-
       - name: Push to Replicate
         run: |
           cog push r8.im/jweek/mask_maker
