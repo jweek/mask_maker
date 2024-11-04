@@ -1,103 +1,87 @@
+# Prediction interface for Cog ⚙️
+# https://github.com/replicate/cog/blob/main/docs/python.md
+
 from cog import BasePredictor, BaseModel, Input, Path
-import os
-from typing import Optional, List
-import torch
-from cv2 import imwrite as cv2_imwrite
-import file_utils
-from torchvision.ops import box_convert
-from groundingdino.util.inference import load_model, load_image, predict, annotate
+import numpy as np
+import cv2
+# import io
+import tempfile
+from typing import Any
+from segment_anything import sam_model_registry, SamPredictor
 
 
-WEIGHTS_CACHE_DIR = "/src/weights"
-HUGGINGFACE_CACHE_DIR = "/src/hf-cache/"
-os.environ["HF_HOME"] = os.environ["HUGGINGFACE_HUB_CACHE"] = HUGGINGFACE_CACHE_DIR
-file_utils.download_grounding_dino_weights(
-    grounding_dino_weights_dir=WEIGHTS_CACHE_DIR,
-    hf_cache_dir=HUGGINGFACE_CACHE_DIR,
-)
-
-
-class ModelOutput(BaseModel):
-    detections: List
-    result_image: Optional[Path]
+class Embedding(BaseModel):
+    shape: list[int] # default: [1, 256, 64, 64]
+    embedding: list[float]
 
 
 class Predictor(BasePredictor):
     def setup(self) -> None:
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        """Load the model into memory to make running multiple predictions efficient"""
+        # self.model = torch.load("./weights.pth")
+        checkpoint = "./checkpoints/sam_vit_h_4b8939.pth"
+        model_type = "vit_h"
+        sam = sam_model_registry[model_type](checkpoint=checkpoint)
+        sam.to(device='cuda')
+        self.predictor = SamPredictor(sam)
 
-        self.model = load_model(
-            "/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py",
-            f"{WEIGHTS_CACHE_DIR}/groundingdino_swint_ogc.pth",
-            device=self.device,
-        )
+    def reshape_embedding(self, embedding_list: list[float], shape: list[int]=[1, 256, 64, 64]) -> np.ndarray:
+        """Reshape the embedding_list to the orignal shape"""
+        # Convert list to numpy array
+        flattened_array = np.array(embedding_list)
 
+        # Reshape the flattened array to its original shape
+        original_shape_array = flattened_array.reshape(tuple(shape))
+
+        return original_shape_array
+    
     def predict(
         self,
-        image: Path = Input(description="Input image to query", default=None),
-        query: str = Input(
-            description="Comma seperated names of the objects to be detected in the image",
-            default=None,
-        ),
-        box_threshold: float = Input(
-            description="Confidence level for object detection",
-            ge=0,
-            le=1,
-            default=0.25,
-        ),
-        text_threshold: float = Input(
-            description="Confidence level for object detection",
-            ge=0,
-            le=1,
-            default=0.25,
-        ),
-        show_visualisation: bool = Input(
-            description="Draw and visualize bounding boxes on the image", default=True
-        ),
-    ) -> ModelOutput:
-        image_source, image = load_image(image)
+        source_image: Path = Input(description="input image file handler"),
+    ) -> Any:
+        """Run a single prediction on the model"""
+        try:
+            # processed_input = preprocess(image)
+            imagedata = cv2.imread(str(source_image))
 
-        boxes, logits, phrases = predict(
-            model=self.model,
-            image=image,
-            caption=query,
-            box_threshold=box_threshold,
-            text_threshold=text_threshold,
-            device=self.device,
-        )
+            # Check if image was successfully loaded
+            if imagedata is None:
+                raise ValueError(f"Could not open or read the image")
+            
+            # Convert the image from BGR to RGB format
+            image_rgb = cv2.cvtColor(imagedata, cv2.COLOR_BGR2RGB)
 
-        # Convert boxes from center, width, height to top left, bottom right
-        height, width, _ = image_source.shape
-        boxes_original_size = boxes * torch.Tensor([width, height, width, height])
-        xyxy = (
-            box_convert(boxes=boxes_original_size, in_fmt="cxcywh", out_fmt="xyxy")
-            .numpy()
-            .astype(int)
-        )
+            # output = self.model(processed_image)
+            self.predictor.set_image(image_rgb)
+            image_embedding = self.predictor.get_image_embedding().cpu().numpy()
+            
+            shape = image_embedding.shape
+            print(shape) # shape supposed to be (1, 256, 64, 64)
+            print("successfully make image embedding\n")
 
-        # Prepare the output
-        detections = []
-        for box, score, label in zip(xyxy, logits, phrases):
-            data = {
-                "label": label,
-                "confidence": score.item(),  # torch tensor to float
-                "bbox": box,
-            }
-            detections.append(data)
+            # return postprocess(output)
+            '''# flatten the image embedding and return it as a list of float
+            output = Embedding(shape=list(shape), embedding=[float(x) for x in np.array(image_embedding).flatten().tolist()])
+            return output'''
 
-        # Visualize the output if requested
-        result_image_path = None
-        if show_visualisation:
-            result_image_path = "/tmp/result.png"
-            result_image = annotate(
-                image_source=image_source,
-                boxes=boxes,
-                logits=logits,
-                phrases=phrases,
-            )
-            cv2_imwrite(result_image_path, result_image)
+            '''# At the start of your predict function, use a NamedTemporaryFile:
+            with tempfile.NamedTemporaryFile(suffix=".npy", delete=False) as temp_file:
+                if temp_file is None:
+                    raise ValueError(f"Could not create temporary file")
+                # Save your numpy array to this file
+                np.save(temp_file, image_embedding)
+                # Ensure file pointer is at the beginning
+                temp_file.seek(0)
+                # Return the file handle
+                return File(temp_file)'''
+        
+            # Save the image embedding to a temporary numpy array file
+            # This file will automatically be deleted by Cog after it has been returned.
+            with tempfile.NamedTemporaryFile(suffix=".npy", delete=False) as temp_file:
+                np.save(temp_file.name, image_embedding)
+                temp_path = temp_file.name
+                print(f"embedding file is saved to temp_path: {temp_path}\n")
 
-        return ModelOutput(
-            detections=detections,
-            result_image=Path(result_image_path) if show_visualisation else None,
-        )
+            return Path(temp_path)
+        except Exception as e:
+            raise ValueError(f"Error processing image: {e}")
