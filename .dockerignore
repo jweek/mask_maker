@@ -1,17 +1,45 @@
-# The .dockerignore file excludes files from the container build process.
-#
-# https://docs.docker.com/engine/reference/builder/#dockerignore-file
+# Git files
 
-# Exclude Git files
-**/.git
-**/.github
-**/.gitignore
+.git
+.github/
+.gitignore
 
-# Exclude Python cache files
-__pycache__
-.mypy_cache
-.pytest_cache
-.ruff_cache
+# Python cache and environment files
 
-# Exclude Python virtual environment
-/venv
+**pycache**/
+.mypy*cache/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+\_.egg-info/
+\*.pyo
+.Python
+
+# Virtual environment
+
+/venv/
+
+# IDE and editor files
+
+_.vscode/
+_.idea/
+
+# Large model or weight files (if managed separately)
+
+# Adjust paths if weights are stored in a specific directory
+
+weights/
+_.pth
+_.ckpt
+\*.onnx
+
+# Logs and temporary files
+
+logs/
+_.log
+_.tmp
+
+# Docker files within cloned repositories
+
+GroundingDINO/Dockerfile
+segment-anything/Dockerfile
