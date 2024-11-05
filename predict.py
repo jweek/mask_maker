@@ -45,14 +45,15 @@ class Predictor(BasePredictor):
 
         # Define a single point at the center of the image
         center_point = np.array([[input_image_np.shape[1] // 2, input_image_np.shape[0] // 2]])
-        point_label = np.array([1])  # Label for "foreground"
+        point_label = np.array([1], dtype=np.int32)  # Label for "foreground"
 
         # Generate the mask
         masks, _, _ = self.predictor.predict(point_coords=center_point, point_labels=point_label)
 
-        # Save and return the mask as an output image
-        mask_image = (masks[0] * 255).astype(np.uint8)  # Convert mask to uint8 for saving
+        # Convert the mask to uint8 format explicitly before saving
+        mask_image = (masks[0].cpu().numpy() * 255).astype(np.uint8)  # Ensure uint8 dtype
         output_path = Path("output_mask.png")
         Image.fromarray(mask_image).save(output_path)
 
         return output_path
+
