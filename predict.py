@@ -34,8 +34,8 @@ class Predictor(BasePredictor):
         self.sam_model.to(DEVICE)
         self.predictor = SamPredictor(self.sam_model)
 
-    def predict(self, image: Path = Input(description="Input image")) -> Path:
-        """Run a simple mask prediction using a center point in the image."""
+    def predict(self, image: Path = Input(description="Input image")) -> str:
+        """Run a simple mask prediction using a center point in the image and confirm it worked."""
         # Load and preprocess the image
         input_image = Image.open(image).convert("RGB")
         input_image_np = np.array(input_image)
@@ -50,10 +50,10 @@ class Predictor(BasePredictor):
         # Generate the mask
         masks, _, _ = self.predictor.predict(point_coords=center_point, point_labels=point_label)
 
-        # Convert the mask to uint8 format explicitly before saving
-        mask_image = (masks[0].cpu().numpy() * 255).astype(np.uint8)  # Ensure uint8 dtype
-        output_path = Path("output_mask.png")
-        Image.fromarray(mask_image).save(output_path)
-
-        return output_path
-
+        # If a mask was generated, print a confirmation message
+        if masks is not None and len(masks) > 0:
+            print("Mask generated successfully!")
+            return "Mask generated successfully!"
+        else:
+            print("Mask generation failed.")
+            return "Mask generation failed."
