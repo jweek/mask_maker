@@ -7,7 +7,7 @@ build:
     - "libgl1-mesa-glx"
     - "ninja-build"
   python_packages:
-    - "torch==2.1.0"
+    - "torch==2.3.1"
     - "torchvision==0.16.0"
     - "transformers==4.34.1"
     - "addict==2.4.0"
@@ -23,6 +23,8 @@ build:
   run:
     - curl -o /usr/local/bin/pget -L "https://github.com/replicate/pget/releases/download/v0.0.1/pget"
     - chmod +x /usr/local/bin/pget
+
+    # Install GroundingDINO
     - 'export PATH=/usr/local/cuda/bin:$PATH
       && export CUDA_HOME=/usr/local/cuda
       && export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
@@ -30,5 +32,14 @@ build:
       && git clone https://github.com/IDEA-Research/GroundingDINO.git
       && cd GroundingDINO && git checkout 60d796825e1266e56f7e4e9e00e88de662b67bd3
       && pip install -e .'
+
+    # Install SAM-2
+    - 'export PATH=/usr/local/cuda/bin:$PATH
+      && export CUDA_HOME=/usr/local/cuda
+      && export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+      && export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6+PTX;8.9;9.0"
+      && git clone https://github.com/facebookresearch/sam2.git
+      && cd sam2
+      && SAM2_BUILD_ALLOW_ERRORS=0 pip install -e ".[notebooks]"'
 
 predict: "predict.py:Predictor"
