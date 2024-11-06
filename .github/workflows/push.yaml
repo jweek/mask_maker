@@ -42,6 +42,9 @@ jobs:
           # can push your model
           token: ${{ secrets.REPLICATE_API_TOKEN }}
 
+      - name: Download model weights
+        run: cog run script/download_weights.py
+
       # If you trigger the workflow manually, you can specify the model name.
       # If you leave it blank (or if the workflow is triggered by a push), the
       # model name will be derived from the `image` value in cog.yaml.

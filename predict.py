@@ -1,59 +1,102 @@
 import os
+import sys
+import subprocess
 import torch
-import numpy as np
-from PIL import Image
-from cog import BasePredictor, Input, Path
-import requests
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-MODEL_CACHE = "checkpoints"
-WEIGHTS_URL = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
+#install GroundingDINO and segment_anything
+os.environ["CUDA_HOME"] = "/usr/local/cuda"
+os.environ['AM_I_DOCKER'] = 'true'
+os.environ['BUILD_WITH_CUDA'] = 'true'
+os.environ["PATH"] += os.pathsep + "/usr/local/cuda/bin"
+os.environ["LD_LIBRARY_PATH"] = "/usr/local/cuda/lib64"
 
-def download_weights(url: str, dest: str) -> None:
-    if not os.path.exists(dest):
-        print(f"Downloading weights from {url} to {dest}")
-        response = requests.get(url)
-        response.raise_for_status()
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        with open(dest, "wb") as f:
-            f.write(response.content)
-        print("Weights downloaded successfully.")
+env_vars = os.environ.copy()
+HOME = os.getcwd()
+sys.path.insert(0, "weights")
+sys.path.insert(0, "weights/GroundingDINO")
+sys.path.insert(0, "weights/segment-anything")
+os.chdir("/src/weights/GroundingDINO")
+subprocess.call([sys.executable, '-m', 'pip', 'install', '-e', '.'], env=env_vars)
+os.chdir("/src/weights/segment-anything")
+subprocess.call([sys.executable, '-m', 'pip', 'install', '-e', '.'], env=env_vars)
+os.chdir(HOME)
+
+from cog import BasePredictor, Input, Path, BaseModel
+from typing import Iterator
+from groundingdino.util.slconfig import SLConfig
+from groundingdino.models import build_model
+from groundingdino.util.utils import clean_state_dict
+from segment_anything import build_sam, SamPredictor
+from grounded_sam import run_grounding_sam
+import uuid
+from hf_path_exports import cache_config_file, cache_file
 
 class Predictor(BasePredictor):
-    def setup(self) -> None:
-        """Load the SAM model and prepare for inference."""
-        global build_sam, SamPredictor
-        from segment_anything import sam_model_registry, SamPredictor
+    def setup(self):
+        """Load the model into memory to make running multiple predictions efficient"""
+        print("Loading pipelines...x")
 
-        # Download weights if not already present
-        weights_path = os.path.join(MODEL_CACHE, "sam_vit_b_01ec64.pth")
-        download_weights(WEIGHTS_URL, weights_path)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # Load the model
-        self.sam_model = sam_model_registry["vit_b"](checkpoint=weights_path)
-        self.sam_model.to(DEVICE)
-        self.predictor = SamPredictor(self.sam_model)
+        def load_model_hf(device='cpu'):
+            args = SLConfig.fromfile(cache_config_file)
+            args.device = device
+            model = build_model(args)
+            checkpoint = torch.load(cache_file, map_location=device)
+            log = model.load_state_dict(clean_state_dict(checkpoint['model']), strict=False)
+            print("Model loaded from {} \n => {}".format(cache_file, log))
+            _ = model.eval()
+            return model
 
-    def predict(self, image: Path = Input(description="Input image")) -> str:
-        """Run a simple mask prediction using a center point in the image and confirm it worked."""
-        # Load and preprocess the image
-        input_image = Image.open(image).convert("RGB")
-        input_image_np = np.array(input_image)
+        self.groundingdino_model = load_model_hf(device)
+        sam_checkpoint = '/src/weights/sam_vit_h_4b8939.pth'
+        self.sam_predictor = SamPredictor(build_sam(checkpoint=sam_checkpoint).to(device))
 
-        # Set the image in the predictor
-        self.predictor.set_image(input_image_np)
+    @torch.inference_mode()
+    def predict(
+            self,
+            image: Path = Input(
+                description="Image",
+                default="https://st.mngbcn.com/rcs/pics/static/T5/fotos/outfit/S20/57034757_56-99999999_01.jpg",
+            ),
+            mask_prompt: str = Input(
+                description="Positive mask prompt",
+                default="clothes,shoes",
+            ),
+            negative_mask_prompt: str = Input(
+                description="Negative mask prompt",
+                default="pants",
+            ),
+            adjustment_factor: int = Input(
+                description="Mask Adjustment Factor (-ve for erosion, +ve for dilation)",
+                default=0,
+            ),
+    ) -> Iterator[Path]:
+        """Run a single prediction on the model"""
+        predict_id = str(uuid.uuid4())
 
-        # Define a single point at the center of the image
-        center_point = np.array([[input_image_np.shape[1] // 2, input_image_np.shape[0] // 2]])
-        point_label = np.array([1], dtype=np.int32)  # Label for "foreground"
+        print(f"Running prediction: {predict_id}...")
 
-        # Generate the mask
-        masks, _, _ = self.predictor.predict(point_coords=center_point, point_labels=point_label)
+        annotated_picture_mask, neg_annotated_picture_mask, mask, inverted_mask = run_grounding_sam(image,
+                                                                                                    mask_prompt,
+                                                                                                    negative_mask_prompt,
+                                                                                                    self.groundingdino_model,
+                                                                                                    self.sam_predictor,
+                                                                                                    adjustment_factor)
+        print("Done!")
 
-        # If a mask was generated, print a confirmation message
-        if masks is not None and len(masks) > 0:
-            print("Mask generated successfully!")
-            return "Mask generated successfully!"
-        else:
-            print("Mask generation failed.")
-            return "Mask generation failed."
+        variable_dict = {
+            'annotated_picture_mask': annotated_picture_mask,
+            'neg_annotated_picture_mask': neg_annotated_picture_mask,
+            'mask': mask,
+            'inverted_mask': inverted_mask
+        }
+
+        output_dir = "/tmp/" + predict_id
+        os.makedirs(output_dir, exist_ok=True)  # create directory if it doesn't exist
+
+        for var_name, img in variable_dict.items():
+            random_filename = output_dir + "/" + var_name + ".jpg"
+            rgb_img = img.convert('RGB')  # Converting image to RGB
+            rgb_img.save(random_filename)
+            yield Path(random_filename)
