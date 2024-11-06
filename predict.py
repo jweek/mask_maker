@@ -22,6 +22,7 @@ class ModelOutput(BaseModel):
     detections: List
     result_image: Optional[Path]
     sam_masks_generated: bool  # Simple flag for SAM
+    error_message: Optional[str]  # Capture error message
 
 class Predictor(BasePredictor):
     def setup(self) -> None:
@@ -61,57 +62,68 @@ class Predictor(BasePredictor):
             description="Draw and visualize bounding boxes on the image", default=True
         ),
     ) -> ModelOutput:
-        # Load image
-        image_source, image = load_image(image)
+        error_message = None
+        try:
+            # Load image
+            image_source, image = load_image(image)
 
-        # DINO predictions
-        boxes, logits, phrases = predict(
-            model=self.model,
-            image=image,
-            caption=query,
-            box_threshold=box_threshold,
-            text_threshold=text_threshold,
-            device=self.device,
-        )
-
-        # Convert boxes from center, width, height to top left, bottom right
-        height, width, _ = image_source.shape
-        boxes_original_size = boxes * torch.Tensor([width, height, width, height])
-        xyxy = (
-            box_convert(boxes=boxes_original_size, in_fmt="cxcywh", out_fmt="xyxy")
-            .numpy()
-            .astype(int)
-        )
-
-        # Prepare DINO output
-        detections = []
-        for box, score, label in zip(xyxy, logits, phrases):
-            data = {
-                "label": label,
-                "confidence": score.item(),  # torch tensor to float
-                "bbox": box,
-            }
-            detections.append(data)
-
-        # Run SAM on the image to generate masks
-        self.sam_model.to(self.device)
-        sam_masks = self.sam_mask_generator.generate(image_source)
-        sam_masks_generated = len(sam_masks) > 0
-
-        # Optional visualization of DINO output
-        result_image_path = None
-        if show_visualisation:
-            result_image_path = "/tmp/result.png"
-            result_image = annotate(
-                image_source=image_source,
-                boxes=boxes,
-                logits=logits,
-                phrases=phrases,
+            # DINO predictions
+            boxes, logits, phrases = predict(
+                model=self.model,
+                image=image,
+                caption=query,
+                box_threshold=box_threshold,
+                text_threshold=text_threshold,
+                device=self.device,
             )
-            cv2_imwrite(result_image_path, result_image)
 
+            # Convert boxes from center, width, height to top left, bottom right
+            height, width, _ = image_source.shape
+            boxes_original_size = boxes * torch.Tensor([width, height, width, height])
+            xyxy = (
+                box_convert(boxes=boxes_original_size, in_fmt="cxcywh", out_fmt="xyxy")
+                .numpy()
+                .astype(int)
+            )
+
+            # Prepare DINO output
+            detections = []
+            for box, score, label in zip(xyxy, logits, phrases):
+                data = {
+                    "label": label,
+                    "confidence": score.item(),  # torch tensor to float
+                    "bbox": box,
+                }
+                detections.append(data)
+
+            # Run SAM on the image to generate masks
+            self.sam_model.to(self.device)
+            sam_masks = self.sam_mask_generator.generate(image_source)
+            sam_masks_generated = len(sam_masks) > 0
+
+            # Optional visualization of DINO output
+            result_image_path = None
+            if show_visualisation:
+                result_image_path = "/tmp/result.png"
+                result_image = annotate(
+                    image_source=image_source,
+                    boxes=boxes,
+                    logits=logits,
+                    phrases=phrases,
+                )
+                cv2_imwrite(result_image_path, result_image)
+
+        except Exception as e:
+            # Capture the error message and set the SAM masks flag to False
+            error_message = str(e)
+            sam_masks_generated = False
+            result_image_path = None
+            detections = []
+
+        # Return output with error message if any exception occurred
         return ModelOutput(
             detections=detections,
-            result_image=Path(result_image_path) if show_visualisation else None,
+            result_image=Path(result_image_path) if result_image_path else None,
             sam_masks_generated=sam_masks_generated,
+            error_message=error_message,
         )
