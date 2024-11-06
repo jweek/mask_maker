@@ -1,102 +1,103 @@
+from cog import BasePredictor, BaseModel, Input, Path
 import os
-import sys
-import subprocess
+from typing import Optional, List
 import torch
+from cv2 import imwrite as cv2_imwrite
+import file_utils
+from torchvision.ops import box_convert
+from groundingdino.util.inference import load_model, load_image, predict, annotate
 
-#install GroundingDINO and segment_anything
-os.environ["CUDA_HOME"] = "/usr/local/cuda"
-os.environ['AM_I_DOCKER'] = 'true'
-os.environ['BUILD_WITH_CUDA'] = 'true'
-os.environ["PATH"] += os.pathsep + "/usr/local/cuda/bin"
-os.environ["LD_LIBRARY_PATH"] = "/usr/local/cuda/lib64"
 
-env_vars = os.environ.copy()
-HOME = os.getcwd()
-sys.path.insert(0, "weights")
-sys.path.insert(0, "weights/GroundingDINO")
-sys.path.insert(0, "weights/segment-anything")
-os.chdir("/src/weights/GroundingDINO")
-subprocess.call([sys.executable, '-m', 'pip', 'install', '-e', '.'], env=env_vars)
-os.chdir("/src/weights/segment-anything")
-subprocess.call([sys.executable, '-m', 'pip', 'install', '-e', '.'], env=env_vars)
-os.chdir(HOME)
+WEIGHTS_CACHE_DIR = "/src/weights"
+HUGGINGFACE_CACHE_DIR = "/src/hf-cache/"
+os.environ["HF_HOME"] = os.environ["HUGGINGFACE_HUB_CACHE"] = HUGGINGFACE_CACHE_DIR
+file_utils.download_grounding_dino_weights(
+    grounding_dino_weights_dir=WEIGHTS_CACHE_DIR,
+    hf_cache_dir=HUGGINGFACE_CACHE_DIR,
+)
 
-from cog import BasePredictor, Input, Path, BaseModel
-from typing import Iterator
-from groundingdino.util.slconfig import SLConfig
-from groundingdino.models import build_model
-from groundingdino.util.utils import clean_state_dict
-from segment_anything import build_sam, SamPredictor
-from grounded_sam import run_grounding_sam
-import uuid
-from hf_path_exports import cache_config_file, cache_file
+
+class ModelOutput(BaseModel):
+    detections: List
+    result_image: Optional[Path]
+
 
 class Predictor(BasePredictor):
-    def setup(self):
-        """Load the model into memory to make running multiple predictions efficient"""
-        print("Loading pipelines...x")
+    def setup(self) -> None:
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = load_model(
+            "/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py",
+            f"{WEIGHTS_CACHE_DIR}/groundingdino_swint_ogc.pth",
+            device=self.device,
+        )
 
-        def load_model_hf(device='cpu'):
-            args = SLConfig.fromfile(cache_config_file)
-            args.device = device
-            model = build_model(args)
-            checkpoint = torch.load(cache_file, map_location=device)
-            log = model.load_state_dict(clean_state_dict(checkpoint['model']), strict=False)
-            print("Model loaded from {} \n => {}".format(cache_file, log))
-            _ = model.eval()
-            return model
-
-        self.groundingdino_model = load_model_hf(device)
-        sam_checkpoint = '/src/weights/sam_vit_h_4b8939.pth'
-        self.sam_predictor = SamPredictor(build_sam(checkpoint=sam_checkpoint).to(device))
-
-    @torch.inference_mode()
     def predict(
-            self,
-            image: Path = Input(
-                description="Image",
-                default="https://st.mngbcn.com/rcs/pics/static/T5/fotos/outfit/S20/57034757_56-99999999_01.jpg",
-            ),
-            mask_prompt: str = Input(
-                description="Positive mask prompt",
-                default="clothes,shoes",
-            ),
-            negative_mask_prompt: str = Input(
-                description="Negative mask prompt",
-                default="pants",
-            ),
-            adjustment_factor: int = Input(
-                description="Mask Adjustment Factor (-ve for erosion, +ve for dilation)",
-                default=0,
-            ),
-    ) -> Iterator[Path]:
-        """Run a single prediction on the model"""
-        predict_id = str(uuid.uuid4())
+        self,
+        image: Path = Input(description="Input image to query", default=None),
+        query: str = Input(
+            description="Comma seperated names of the objects to be detected in the image",
+            default=None,
+        ),
+        box_threshold: float = Input(
+            description="Confidence level for object detection",
+            ge=0,
+            le=1,
+            default=0.25,
+        ),
+        text_threshold: float = Input(
+            description="Confidence level for object detection",
+            ge=0,
+            le=1,
+            default=0.25,
+        ),
+        show_visualisation: bool = Input(
+            description="Draw and visualize bounding boxes on the image", default=True
+        ),
+    ) -> ModelOutput:
+        image_source, image = load_image(image)
 
-        print(f"Running prediction: {predict_id}...")
+        boxes, logits, phrases = predict(
+            model=self.model,
+            image=image,
+            caption=query,
+            box_threshold=box_threshold,
+            text_threshold=text_threshold,
+            device=self.device,
+        )
 
-        annotated_picture_mask, neg_annotated_picture_mask, mask, inverted_mask = run_grounding_sam(image,
-                                                                                                    mask_prompt,
-                                                                                                    negative_mask_prompt,
-                                                                                                    self.groundingdino_model,
-                                                                                                    self.sam_predictor,
-                                                                                                    adjustment_factor)
-        print("Done!")
+        # Convert boxes from center, width, height to top left, bottom right
+        height, width, _ = image_source.shape
+        boxes_original_size = boxes * torch.Tensor([width, height, width, height])
+        xyxy = (
+            box_convert(boxes=boxes_original_size, in_fmt="cxcywh", out_fmt="xyxy")
+            .numpy()
+            .astype(int)
+        )
 
-        variable_dict = {
-            'annotated_picture_mask': annotated_picture_mask,
-            'neg_annotated_picture_mask': neg_annotated_picture_mask,
-            'mask': mask,
-            'inverted_mask': inverted_mask
-        }
+        # Prepare the output
+        detections = []
+        for box, score, label in zip(xyxy, logits, phrases):
+            data = {
+                "label": label,
+                "confidence": score.item(),  # torch tensor to float
+                "bbox": box,
+            }
+            detections.append(data)
 
-        output_dir = "/tmp/" + predict_id
-        os.makedirs(output_dir, exist_ok=True)  # create directory if it doesn't exist
+        # Visualize the output if requested
+        result_image_path = None
+        if show_visualisation:
+            result_image_path = "/tmp/result.png"
+            result_image = annotate(
+                image_source=image_source,
+                boxes=boxes,
+                logits=logits,
+                phrases=phrases,
+            )
+            cv2_imwrite(result_image_path, result_image)
 
-        for var_name, img in variable_dict.items():
-            random_filename = output_dir + "/" + var_name + ".jpg"
-            rgb_img = img.convert('RGB')  # Converting image to RGB
-            rgb_img.save(random_filename)
-            yield Path(random_filename)
+        return ModelOutput(
+            detections=detections,
+            result_image=Path(result_image_path) if show_visualisation else None,
+        )
