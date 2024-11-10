@@ -1,22 +1,26 @@
 # predict.py
 
-from cog import BasePredictor, BaseModel, Input, Path
 import os
+
+from file_utils import WEIGHTS_INFO  # Import WEIGHTS_INFO without importing transformers
+
+# Set environment variables before any other imports
+os.environ["HF_HOME"] = WEIGHTS_INFO["HUGGINGFACE_CACHE_DIR"]
+os.environ["HUGGINGFACE_HUB_CACHE"] = WEIGHTS_INFO["HUGGINGFACE_CACHE_DIR"]
+os.environ["TRANSFORMERS_CACHE"] = WEIGHTS_INFO["HUGGINGFACE_CACHE_DIR"]
+
+# Now import the rest
+from cog import BasePredictor, BaseModel, Input, Path
 from typing import Optional, List
 import torch
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 from cv2 import imwrite as cv2_imwrite
-import file_utils
+import file_utils  # Import the rest of file_utils
 from torchvision.ops import box_convert
 from groundingdino.util.inference import load_model, load_image, predict, annotate
 
-WEIGHTS_CACHE_DIR = "/src/weights"
-SAM_WEIGHTS_DIR = "/src/sam_weights/sam_vit_b_01ec64.pth"
-HUGGINGFACE_CACHE_DIR = "/src/hf-cache/"
-os.environ["HF_HOME"] = os.environ["HUGGINGFACE_HUB_CACHE"] = HUGGINGFACE_CACHE_DIR
-
-file_utils.download_grounding_dino_weights(grounding_dino_weights_dir=WEIGHTS_CACHE_DIR, hf_cache_dir=HUGGINGFACE_CACHE_DIR)
-file_utils.download_sam_weights(sam_weights_dir=SAM_WEIGHTS_DIR)
+# Download all necessary weights
+file_utils.download_weights()
 
 class ModelOutput(BaseModel):
     detections: List
@@ -26,25 +30,30 @@ class ModelOutput(BaseModel):
 
 class Predictor(BasePredictor):
     def setup(self) -> None:
+        """Set up the models and load them into memory."""
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # DINO model setup
+        # Setting up DINO model
+        print("Setting up DINO model...")
         self.model = load_model(
             "/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py",
-            f"{WEIGHTS_CACHE_DIR}/groundingdino_swint_ogc.pth",
+            f"{file_utils.WEIGHTS_INFO['WEIGHTS_CACHE_DIR']}/groundingdino_swint_ogc.pth",
             device=self.device,
         )
-        
-        # SAM model setup
-        self.sam_model = sam_model_registry["vit_b"](checkpoint=SAM_WEIGHTS_DIR)
+        print("DINO model loaded successfully!")
+
+        # Setting up SAM model
+        print("Setting up SAM model...")
+        self.sam_model = sam_model_registry["vit_b"](checkpoint=file_utils.WEIGHTS_INFO["SAM_WEIGHTS_LOCAL_FILE"])
         self.sam_mask_generator = SamAutomaticMaskGenerator(self.sam_model)
+        print("SAM model loaded successfully!")
 
     def predict(
         self,
         image: Path = Input(description="Input image to query", default=None),
         query: str = Input(
             description="Comma-separated names of the objects to be detected in the image",
-            default=None,
+            default="car",  # Provide a default query in case it's not provided
         ),
         box_threshold: float = Input(
             description="Confidence level for object detection",
@@ -123,7 +132,7 @@ class Predictor(BasePredictor):
         # Return output with error message if any exception occurred
         return ModelOutput(
             detections=detections,
-            result_image=Path(result_image_path) if result_image_path else None,
+            result_image=None,
             sam_masks_generated=sam_masks_generated,
             error_message=error_message,
         )
