@@ -5,6 +5,9 @@ hf-cache/
 sam_weights/
 dino_weights/
 tmp.tar
+tmp_file
+weights_dino/
+weights_sam/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

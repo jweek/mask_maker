@@ -37,7 +37,7 @@ class Predictor(BasePredictor):
         print("Setting up DINO model...")
         self.model = load_model(
             "/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py",
-            f"{file_utils.WEIGHTS_INFO['WEIGHTS_CACHE_DIR']}/groundingdino_swint_ogc.pth",
+            f"{file_utils.WEIGHTS_INFO['DINO_WEIGHTS_DIR']}/groundingdino_swint_ogc.pth",
             device=self.device,
         )
         print("DINO model loaded successfully!")
