@@ -95,66 +95,73 @@ def score_detection(detection, image_width, image_height):
     score = (adj_confidence * w_conf) + (adj_size * w_size) + (normalized_distance * w_proximity)
     return score
 
-def run_mask_maker(local_image_path, mask_prompt, groundingdino_model, sam_predictor, box_threshold, text_threshold):
+def run_mask_maker(local_image_path, mask_prompt, groundingdino_model, sam_predictor, threshold):
     start_time = time.time()
 
     # Parse the mask_prompt into a list of MaskTerm objects
-    terms = [MaskTerm(term.strip().rstrip('.'), term.endswith('.')) for term in mask_prompt.split(',')]
+    terms = [MaskTerm(term.strip().rstrip('.'), term.strip().endswith('.')) for term in mask_prompt.split(',')]
 
     # Load image
     image_source, image = load_image(local_image_path)
     height, width, _ = image_source.shape 
 
-    # Process all terms in one call to DINO
-    mark_time = time.time()
-    boxes, logits, phrases = predict(
-        model=groundingdino_model,
-        image=image,
-        caption=mask_prompt,
-        box_threshold=box_threshold,
-        text_threshold=text_threshold
-    )
-    dino_processing_time = time.time() - mark_time
-
-    # Prepare detections data using box_ops for pixel conversion
     detections = []
-    term_to_detections = {term.term: [] for term in terms}  # Map term to its detections
-    for i, box in enumerate(boxes):
-        # Convert box from center-based coordinates to corner-based coordinates
-        box_xyxy = box_ops.box_cxcywh_to_xyxy(box)
+    term_to_detections = {}
+    dino_processing_time_total = 0
+    sam_processing_time_total = 0
 
-        # Scale box to pixel coordinates
-        pixel_box = box_xyxy * torch.Tensor([width, height, width, height])
-
-        # Ensure pixel values are within image bounds
-        x_min, y_min, x_max, y_max = pixel_box.int().tolist()
-        x_min = max(0, min(x_min, width - 1))
-        y_min = max(0, min(y_min, height - 1))
-        x_max = max(0, min(x_max, width - 1))
-        y_max = max(0, min(y_max, height - 1))
-
-        # Calculate main_score and store it in detection_data
-        detection_data = {
-            "ratio": box.tolist(),          # Original ratio coordinates [cx, cy, width, height]
-            "pixel": [x_min, y_min, x_max, y_max],  # Converted pixel coordinates [x_min, y_min, x_max, y_max]
-            "phrase": phrases[i],           # Detected phrase
-            "confidence": logits[i].item(),  # Confidence score as a float
-            "main_score": score_detection(
-                {"confidence": logits[i].item(), "pixel": [x_min, y_min, x_max, y_max]},
-                width,
-                height
-            )  # Main score as a float
-        }
-        detections.append(detection_data)
-
-        # Map detections to terms
-        term_to_detections[phrases[i]].append(detection_data)
-
-    # SAM Mask Processing per Term
-    mark_time = time.time()
+    # Process each term individually
     for term in terms:
-        detections_for_term = term_to_detections.get(term.term, [])
+        print(f"Processing term: {term.term}")
+        # Run DINO for each term
+        dino_start_time = time.time()
+        boxes, logits, phrases = predict(
+            model=groundingdino_model,
+            image=image,
+            caption=term.term,
+            box_threshold=threshold,
+            text_threshold=threshold
+        )
+        dino_processing_time = time.time() - dino_start_time
+        dino_processing_time_total += dino_processing_time
+
+        # Prepare detections data
+        term_detections = []
+        for i, box in enumerate(boxes):
+            # Convert box from center-based coordinates to corner-based coordinates
+            box_xyxy = box_ops.box_cxcywh_to_xyxy(box)
+
+            # Scale box to pixel coordinates
+            pixel_box = box_xyxy * torch.Tensor([width, height, width, height])
+
+            # Ensure pixel values are within image bounds
+            x_min, y_min, x_max, y_max = pixel_box.int().tolist()
+            x_min = max(0, min(x_min, width - 1))
+            y_min = max(0, min(y_min, height - 1))
+            x_max = max(0, min(x_max, width - 1))
+            y_max = max(0, min(y_max, height - 1))
+
+            # Calculate main_score and store it in detection_data
+            detection_data = {
+                "ratio": box.tolist(),          # Original ratio coordinates [cx, cy, width, height]
+                "pixel": [x_min, y_min, x_max, y_max],  # Converted pixel coordinates [x_min, y_min, x_max, y_max]
+                "phrase": phrases[i],           # Detected phrase
+                "confidence": logits[i].item(),  # Confidence score as a float
+                "main_score": score_detection(
+                    {"confidence": logits[i].item(), "pixel": [x_min, y_min, x_max, y_max]},
+                    width,
+                    height
+                )  # Main score as a float
+            }
+            detections.append(detection_data)
+            term_detections.append(detection_data)
+        
+        term_to_detections[term.term] = term_detections
+
+        # Now process SAM for this term
+        detections_for_term = term_detections
         if not detections_for_term:
+            print(f"No detections for term: {term.term}")
             continue  # No detections for this term
 
         # Handle single object selection
@@ -171,6 +178,7 @@ def run_mask_maker(local_image_path, mask_prompt, groundingdino_model, sam_predi
         sam_boxes = torch.tensor(boxes_for_sam, dtype=torch.float32).to(sam_predictor.device)
 
         # Generate masks using SAM
+        sam_start_time = time.time()
         sam_predictor.set_image(image_source)
         transformed_boxes = sam_predictor.transform.apply_boxes_torch(sam_boxes, image_source.shape[:2])
         masks, _, _ = sam_predictor.predict_torch(
@@ -183,6 +191,9 @@ def run_mask_maker(local_image_path, mask_prompt, groundingdino_model, sam_predi
         # Merge masks if multiple
         merged_mask = np.logical_or.reduce(masks.squeeze(1).cpu().numpy()) if masks.shape[0] > 1 else masks[0, 0].cpu().numpy()
 
+        sam_processing_time = time.time() - sam_start_time
+        sam_processing_time_total += sam_processing_time
+
         # Flatten the mask to a 1D array and apply custom RLE encoding
         flat_mask = merged_mask.flatten().astype(np.uint8)
         rle_counts = custom_rle_encode(flat_mask)
@@ -193,7 +204,6 @@ def run_mask_maker(local_image_path, mask_prompt, groundingdino_model, sam_predi
             'counts': rle_counts
         }
 
-    sam_processing_time = time.time() - mark_time
     processing_time = time.time() - start_time
 
     # Prepare data for output
@@ -218,8 +228,7 @@ def run_mask_maker(local_image_path, mask_prompt, groundingdino_model, sam_predi
         "mask_encoding": "Custom RLE",
         "image_width": width,
         "image_height": height,
-        "box_threshold": box_threshold,
-        "text_threshold": text_threshold
+        "threshold": threshold
     }
 
     # Updated mask_data with the new JSON output

@@ -55,16 +55,12 @@ class Predictor(BasePredictor):
             ),
             mask_prompt: str = Input(
                 description="Comma-separated mask terms (add a period at end for single object detection per term)",
-                default="vehicle., windows, wheels, headlights",
+                default="Person., shirt, pants, hat",
             ),
-            box_threshold: float = Input(
-                description="Box threshold for object detection",
+            threshold: float = Input(
+                description="Threshold for object detection",
                 default=0.2,
-            ),
-            text_threshold: float = Input(
-                description="Text threshold for object detection",
-                default=0.2,
-            ),
+            )
     ) -> dict:
         """Run a single prediction and return mask data as a dictionary."""
 
@@ -79,8 +75,7 @@ class Predictor(BasePredictor):
             mask_prompt=mask_prompt,
             groundingdino_model=self.groundingdino_model,
             sam_predictor=self.sam_predictor,
-            box_threshold=box_threshold,
-            text_threshold=text_threshold
+            threshold=threshold
         )
         print(f"Generated mask data with {len(mask_data['terms'])} terms.")
 
