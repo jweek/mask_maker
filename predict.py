@@ -44,8 +44,9 @@ class Predictor(BasePredictor):
 
         # Setting up SAM model
         print("Setting up SAM model...")
-        self.sam_model = sam_model_registry["vit_b"](checkpoint=file_utils.WEIGHTS_INFO["SAM_WEIGHTS_LOCAL_FILE"])
+        self.sam_model = sam_model_registry["vit_l"](checkpoint=file_utils.WEIGHTS_INFO["SAM_WEIGHTS_LOCAL_FILE"])
         self.sam_mask_generator = SamAutomaticMaskGenerator(self.sam_model)
+        self.sam_model.to(self.device)
         print("SAM model loaded successfully!")
 
     def predict(
@@ -106,7 +107,6 @@ class Predictor(BasePredictor):
                 detections.append(data)
 
             # Run SAM on the image to generate masks
-            self.sam_model.to(self.device)
             sam_masks = self.sam_mask_generator.generate(image_source)
             sam_masks_generated = len(sam_masks) > 0
 
